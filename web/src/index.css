@@ -1,0 +1,148 @@
+:root {
+  --bg: #fafafa;
+  --fg: #1d1d1f;
+  --muted: #666;
+  --border: #d4d4d8;
+  --accent: #2f5bea;
+  --error: #b42318;
+  --email: #fde68a;
+  --phone: #bfdbfe;
+  --card: #fecaca;
+  --api_key: #e9d5ff;
+  --national_id: #bbf7d0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131316;
+    --fg: #ececf0;
+    --muted: #a1a1aa;
+    --border: #3f3f46;
+    --accent: #7c9cff;
+    --error: #f97066;
+    --email: #7a5c00;
+    --phone: #1e3a6e;
+    --card: #7a1f1f;
+    --api_key: #4c2a7a;
+    --national_id: #14532d;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+}
+
+.notice,
+.legend {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+label {
+  display: block;
+  margin: 16px 0 6px;
+  font-weight: 600;
+}
+
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px;
+  font: 0.9rem ui-monospace, Consolas, monospace;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button {
+  padding: 8px 18px;
+  font: inherit;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button.secondary {
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.type-email { background: var(--email); }
+.type-phone { background: var(--phone); }
+.type-card { background: var(--card); }
+.type-api_key { background: var(--api_key); }
+.type-national_id { background: var(--national_id); }
+
+.result {
+  margin: 12px 0 0;
+  padding: 12px;
+  font: 0.9rem/1.6 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+mark {
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+mark.ambiguous {
+  outline: 1px dashed var(--fg);
+}
