@@ -7,6 +7,13 @@ Card on file: 4111 1111 1111 1111 (test number).
 Employee ID 123-45-6789, legacy ref 987654321.
 Deploy key: AKIAIOSFODNN7EXAMPLE`
 
+function describe(f: Finding): string {
+  const label = TYPE_LABELS[f.type]
+  if (f.review) return `${label}: ${f.review.label === 'sensitive' ? 'sensitive' : 'not sensitive'} - ${f.review.reason}`
+  if (f.reviewError) return `${label} (${f.reviewError})`
+  return f.confidence === 'ambiguous' ? `${label} (needs review)` : label
+}
+
 type Status =
   | { kind: 'idle' }
   | { kind: 'loading' }
@@ -127,8 +134,8 @@ export default function App() {
               s.finding ? (
                 <mark
                   key={i}
-                  className={`type-${s.finding.type} ${s.finding.confidence}`}
-                  title={`${TYPE_LABELS[s.finding.type]}${s.finding.confidence === 'ambiguous' ? ' (needs review)' : ''}`}
+                  className={`type-${s.finding.type} ${s.finding.confidence} ${s.finding.review?.label ?? ''}`}
+                  title={describe(s.finding)}
                 >
                   {s.text}
                 </mark>
@@ -137,7 +144,7 @@ export default function App() {
               ),
             )}
           </pre>
-          <p className="legend">Dashed outline = ambiguous match, to be reviewed by the LLM step.</p>
+          <p className="legend">Dashed outline = ambiguous, not reviewed. Solid outline = LLM says sensitive. Faded = LLM says not sensitive. Hover for the reason.</p>
         </section>
       )}
     </main>

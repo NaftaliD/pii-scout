@@ -6,6 +6,8 @@ export interface Finding {
   end: number
   text: string
   confidence: 'high' | 'ambiguous'
+  review?: { label: 'sensitive' | 'not_sensitive'; reason: string }
+  reviewError?: string
 }
 
 export const TYPE_LABELS: Record<FindingType, string> = {

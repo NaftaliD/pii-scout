@@ -146,3 +146,12 @@ mark {
 mark.ambiguous {
   outline: 1px dashed var(--fg);
 }
+
+mark.sensitive {
+  outline: 2px solid var(--fg);
+}
+
+mark.not_sensitive {
+  opacity: 0.45;
+  outline: none;
+}
