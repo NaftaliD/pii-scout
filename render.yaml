@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: scanner
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: LLM_API_KEY
+        sync: false
