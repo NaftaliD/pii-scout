@@ -4,7 +4,7 @@ A small full-stack TypeScript app that scans text for sensitive data (emails, ph
 API keys, ID numbers). Fast rules find candidates; ambiguous ones are sent to an LLM-style reviewer, and
 results stream to the browser as they finish.
 
-![Scanning sample text: rule-based findings appear instantly, then ambiguous matches are reviewed and resolved one by one](docs/demo.gif)
+![Scanning sample text: rule-based findings appear instantly, ambiguous matches are reviewed and resolved one by one, then the Redact button replaces every finding with a placeholder](docs/demo.gif)
 
 **Live demo:** <https://scanner-crgz.onrender.com> · [full-size screenshot](docs/screenshot.png)
 
