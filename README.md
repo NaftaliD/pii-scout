@@ -111,7 +111,7 @@ by design), so it resets on restart; with a real provider, also set a spend cap 
 
 - **Rate limit:** a fixed-window counter per IP (`limits.ts`); over the limit gets `429` with `Retry-After`. It runs before the body parser, so a refused request costs almost nothing. Expired entries are swept lazily, so the map cannot grow forever.
 - **Stream cap:** each open stream holds a connection and up to 4 review calls, so open streams are capped per IP and overall. The slot is released on the response's `close` event, which fires on normal end, error and client abort.
-- **Proxy gotcha:** behind Render every request arrives via the proxy. Without `trust proxy` all visitors share one IP (and one limit); trusting too many hops lets clients spoof `X-Forwarded-For`. Both cases are tested in `app.limits.test.ts`.
+- **Proxy gotcha:** behind a proxy every request arrives from the proxy's address. Without `trust proxy` all visitors share one IP (and one limit); trusting too many hops lets clients spoof `X-Forwarded-For`. Both cases are tested in `app.limits.test.ts`. On Render I measured the chain with a temporary debug endpoint: `X-Forwarded-For` is `client, Cloudflare edge, Render internal` and the app's socket peer is a fourth address, so the real client is **3 hops** from the app (`TRUST_PROXY_HOPS=3` in `render.yaml`). With 1 or 2 hops the key was Cloudflare's rotating edge address, so the limit never triggered; this was only caught by testing the live site.
 - **Where the counters live:** in this process's memory by default (resets on deploy, not shared between instances), or in Redis when `REDIS_URL` is set, see below.
 
 ### Shared state with Redis (optional)
@@ -145,7 +145,7 @@ All optional. Names are listed in `.env.example`; never commit real values.
 | `RATE_LIMIT_PER_MIN` | `20` | Requests per IP per minute on `/api` |
 | `MAX_STREAMS_PER_IP` / `MAX_STREAMS_TOTAL` | `2` / `20` | Simultaneous open streams |
 | `REDIS_URL` | none | If set, rate limits, stream slots and the spend budget live in Redis; otherwise in process memory |
-| `TRUST_PROXY_HOPS` | `1` in production, else `0` | Reverse-proxy hops trusted when reading the client IP |
+| `TRUST_PROXY_HOPS` | `1` in production, else `0` (`render.yaml` sets `3`) | Reverse-proxy hops trusted when reading the client IP |
 
 Try these to see the guards fire: `FAKE_FAILURE_RATE=1` (breaker opens), `LLM_BUDGET_UNITS=2` (budget runs out).
 
