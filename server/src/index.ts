@@ -1,4 +1,6 @@
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { createApp } from "./app";
+import { DEFAULT_WORKER_MIN_CHARS } from "./scan-runner";
 import { createFakeClassifier } from "./fake";
 import { CircuitBreaker, SpendBudget, guardClassifier } from "./guards";
 import { createAnthropicClassifier } from "./llm";
@@ -28,8 +30,21 @@ const budget = new SpendBudget(num("LLM_BUDGET_UNITS", 20));
 const breaker = new CircuitBreaker(num("BREAKER_THRESHOLD", 5), num("BREAKER_COOLDOWN_MS", 30_000));
 const classifier = guardClassifier(provider, { budget, breaker, costPerCall: num("LLM_COST_PER_CALL", 1) });
 
+// Event-loop delay histogram: how late timers fire. Large values mean something blocked the main thread.
+const loop = monitorEventLoopDelay({ resolution: 10 });
+loop.enable();
+
 createApp({
   classifier,
+  scan: {
+    cpuBurnMs: num("FAKE_SCAN_CPU_MS", 0),
+    workerMinChars: num("WORKER_MIN_CHARS", DEFAULT_WORKER_MIN_CHARS),
+  },
+  runtimeStatus: () => {
+    const status = { eventLoopMaxDelayMs: Math.round(loop.max / 1e6), eventLoopP99DelayMs: Math.round(loop.percentile(99) / 1e6) };
+    loop.reset(); // report the window since the last /health call
+    return status;
+  },
   llmStatus: () => ({ mode, budget: { spent: budget.spent, limit: budget.limit }, breaker: breaker.state }),
 }).listen(port, "0.0.0.0", () => {
   console.log(`scanner listening on 0.0.0.0:${port} (llm mode: ${mode})`);

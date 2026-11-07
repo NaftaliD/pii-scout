@@ -2,7 +2,7 @@ import path from "node:path";
 import express from "express";
 import { z } from "zod";
 import { reviewFindings, type Classifier } from "./review";
-import { scanText } from "./scanner";
+import { runScan, type ScanOptions } from "./scan-runner";
 import { openSse } from "./sse";
 
 export const MAX_TEXT_LENGTH = 100_000;
@@ -16,6 +16,9 @@ export interface AppOptions {
   classifier?: Classifier;
   /** Extra info for /health (e.g. budget and breaker state). */
   llmStatus?: () => unknown;
+  /** Extra runtime info for /health (e.g. event-loop lag). */
+  runtimeStatus?: () => unknown;
+  scan?: Omit<ScanOptions, "signal">;
 }
 
 export function createApp(opts: AppOptions = {}): express.Express {
@@ -24,7 +27,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use(express.json({ limit: "200kb" }));
 
   app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok", llm: opts.llmStatus?.() });
+    res.status(200).json({ status: "ok", llm: opts.llmStatus?.(), runtime: opts.runtimeStatus?.() });
   });
 
   function parseBody(req: express.Request, res: express.Response): string | null {
@@ -40,15 +43,15 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.post("/api/scan", async (req, res) => {
     const text = parseBody(req, res);
     if (text === null) return;
-    const findings = scanText(text);
-    if (!opts.classifier) {
-      res.json({ findings });
-      return;
-    }
-    // Cancel in-flight LLM calls if the client disconnects.
+    // Cancel the scan and any in-flight LLM calls if the client disconnects.
     const ac = new AbortController();
     res.on("close", () => ac.abort());
     try {
+      const findings = await runScan(text, { ...opts.scan, signal: ac.signal });
+      if (!opts.classifier) {
+        res.json({ findings });
+        return;
+      }
       res.json({ findings: await reviewFindings(text, findings, opts.classifier, { signal: ac.signal }) });
     } catch {
       if (!res.headersSent) res.status(499).end();
@@ -66,7 +69,7 @@ export function createApp(opts: AppOptions = {}): express.Express {
     const sse = openSse(res);
 
     try {
-      const findings = scanText(text);
+      const findings = await runScan(text, { ...opts.scan, signal: ac.signal });
       sse.send("scan", { findings });
       if (opts.classifier) {
         await reviewFindings(text, findings, opts.classifier, {
