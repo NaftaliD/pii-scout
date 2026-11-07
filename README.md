@@ -4,7 +4,9 @@ A small full-stack TypeScript app that scans text for sensitive data (emails, ph
 API keys, ID numbers). Fast rules find candidates; ambiguous ones are sent to an LLM-style reviewer, and
 results stream to the browser as they finish.
 
-**Live demo:** <https://scanner-crgz.onrender.com>
+![Scanning sample text: rule-based findings appear instantly, then ambiguous matches are reviewed and resolved one by one](docs/demo.gif)
+
+**Live demo:** <https://scanner-crgz.onrender.com> · [full-size screenshot](docs/screenshot.png)
 
 > **Note:** the demo runs on Render's free plan, which puts the service to sleep after about 15 minutes without traffic. The first request after that can take around 60 seconds while it wakes up; after that it is fast.
 
@@ -110,7 +112,21 @@ by design), so it resets on restart; with a real provider, also set a spend cap 
 - **Rate limit:** a fixed-window counter per IP (`limits.ts`); over the limit gets `429` with `Retry-After`. It runs before the body parser, so a refused request costs almost nothing. Expired entries are swept lazily, so the map cannot grow forever.
 - **Stream cap:** each open stream holds a connection and up to 4 review calls, so open streams are capped per IP and overall. The slot is released on the response's `close` event, which fires on normal end, error and client abort.
 - **Proxy gotcha:** behind Render every request arrives via the proxy. Without `trust proxy` all visitors share one IP (and one limit); trusting too many hops lets clients spoof `X-Forwarded-For`. Both cases are tested in `app.limits.test.ts`.
-- **Limit:** counters live in one process's memory, so they reset on deploy and are not shared between instances (that would need Redis or a gateway).
+- **Where the counters live:** in this process's memory by default (resets on deploy, not shared between instances), or in Redis when `REDIS_URL` is set, see below.
+
+### Shared state with Redis (optional)
+
+With `REDIS_URL` set, the three pieces of state that must be shared across instances move to Redis (`redis-stores.ts`); without it the app uses the in-memory versions, so local development needs nothing. Both satisfy the interfaces in `stores.ts` (return type `T | Promise<T>`, so the in-memory classes stay synchronous).
+
+| State | Redis approach | If Redis is down |
+| --- | --- | --- |
+| Rate limit | `INCR` + `PEXPIRE` in one Lua script, so a crash cannot leave a key that never expires; Redis deletes expired windows itself | **Fail open**: allow the request, log a warning |
+| Stream slots | Per-IP and total counters with a TTL, so slots leaked by a crashed instance heal themselves | **Fail open** |
+| Spend budget | Monthly key `spend:YYYY-MM`; check-and-add in one Lua script, so concurrent instances cannot overspend | **Fail closed**: refuse the review ("could not be verified"); protecting money is the point |
+
+Lua scripts run atomically inside Redis, which is what makes these safe across processes. Tests run the same suite against a real Redis in CI (`TEST_REDIS_URL`) and against `ioredis-mock` locally, including a test that ten concurrent charges against a budget of five produce exactly five successes. The circuit breaker stays per-instance on purpose: each instance should judge the provider from what it observes itself. `/health` shows `store` (`memory` or `redis (<connection status>)`) and, on Render, the deployed `version` (commit).
+
+On Render, `render.yaml` also creates a free Key Value (Redis-compatible) instance with `maxmemoryPolicy: noeviction` and an empty `ipAllowList` (internal access only), and passes its connection string to the web service as `REDIS_URL`. The free plan has no persistence, which is fine for counters.
 
 ### Configuration
 
@@ -128,6 +144,7 @@ All optional. Names are listed in `.env.example`; never commit real values.
 | `WORKER_MIN_CHARS` | `20000` | Input size at which scanning moves to a worker thread |
 | `RATE_LIMIT_PER_MIN` | `20` | Requests per IP per minute on `/api` |
 | `MAX_STREAMS_PER_IP` / `MAX_STREAMS_TOTAL` | `2` / `20` | Simultaneous open streams |
+| `REDIS_URL` | none | If set, rate limits, stream slots and the spend budget live in Redis; otherwise in process memory |
 | `TRUST_PROXY_HOPS` | `1` in production, else `0` | Reverse-proxy hops trusted when reading the client IP |
 
 Try these to see the guards fire: `FAKE_FAILURE_RATE=1` (breaker opens), `LLM_BUDGET_UNITS=2` (budget runs out).
@@ -199,4 +216,4 @@ request after a quiet period is slow.
 
 ## What I would do next
 
-A chunked, streaming scan across a worker pool (overlapping chunks, dedupe at chunk borders), fixes for the rule gaps the evaluation found (parenthesized phone numbers, IPs flagged as phones), running the evaluation through a real model to measure the reviewer, persistent spend tracking and shared rate-limit state (Redis), metrics and tracing, and auth.
+A chunked, streaming scan across a worker pool (overlapping chunks, dedupe at chunk borders), fixes for the rule gaps the evaluation found (parenthesized phone numbers, IPs flagged as phones), running the evaluation through a real model to measure the reviewer, durable spend tracking (the free Redis plan has no persistence), metrics and tracing, and auth.
