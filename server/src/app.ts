@@ -47,6 +47,16 @@ export function createApp(opts: AppOptions = {}): express.Express {
     next();
   });
 
+  // TEMPORARY diagnostic (remove after use): how this server sees the caller behind Render's proxies.
+  app.get("/api/whoami", (req, res) => {
+    res.json({
+      ip: req.ip,
+      ips: req.ips,
+      xff: req.headers["x-forwarded-for"],
+      cf: req.headers["cf-connecting-ip"],
+    });
+  });
+
   app.use(express.json({ limit: "200kb" }));
 
   app.get("/health", async (_req, res) => {
