@@ -23,6 +23,10 @@ services:
         value: fake
       - key: LLM_BUDGET_UNITS
         value: "20"
+      # Cloudflare and Render each add a proxy hop in front of the container; counting from the right of
+      # X-Forwarded-For, the 2nd entry is the real client (clients cannot forge it).
+      - key: TRUST_PROXY_HOPS
+        value: "2"
       - key: REDIS_URL
         fromService:
           type: keyvalue
