@@ -9,16 +9,26 @@ results stream to the browser as they finish.
 **Live demo:** <https://scanner-crgz.onrender.com> · [full-size screenshot](docs/screenshot.png)
 
 > **Note:** the demo runs on Render's free plan, which puts the service to sleep after about 15 minutes without traffic. The first request after that can take around 60 seconds while it wakes up; after that it is fast.
-
+>
 > **Synthetic data only.** Do not paste real personal or secret data. By default the "LLM" is a free
 > dummy, so no text is ever sent to a third-party AI service.
 
 It is also a learning project about the **Node.js runtime**: the event loop, worker threads, streaming,
 cancellation, bounded concurrency and fail-safe design. See [Node runtime notes](#node-runtime-notes).
 
+## What it does
+
+- **Rules first:** regexes plus validators find emails, phone numbers, cards (Luhn-checked), API keys and ID numbers in milliseconds.
+- **Reviewer for the unclear ones:** ambiguous matches go to a classifier (a free dummy by default, Anthropic optional) that only ever sees masked context.
+- **Streaming and cancel:** rule findings appear immediately and reviews stream in as they finish; Cancel stops the server-side work too.
+- **Redact:** one click replaces every finding with a placeholder such as `[EMAIL]`, entirely in the browser.
+- **Fail-safe by design:** a worker thread keeps the server responsive, and a spend budget, circuit breaker, rate limit and stream cap protect a public URL. Shared state can live in Redis.
+- **Measured:** a labeled sample set gives precision and recall, enforced in CI.
+- **Deployed automatically:** push to `main`, CI passes, Render deploys.
+
 ## Run it locally
 
-Requires Node 24 (see `.nvmrc`).
+Requires Node 24 (see `.nvmrc`). No database, Redis or API key is needed; those are all optional.
 
 ```bash
 # terminal 1: API on :3000
@@ -28,7 +38,7 @@ cd server && npm install && npm run dev
 cd web && npm install && npm run dev
 ```
 
-Open <http://localhost:5173>. Checks: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` in each package.
+Open <http://localhost:5173>. Checks: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` in each package, and `npm run eval` in `server/` for precision and recall. The Redis tests use an in-process mock locally; set `TEST_REDIS_URL` to run them against a real Redis (CI does this).
 
 ## Architecture
 
@@ -37,29 +47,44 @@ flowchart LR
   subgraph Browser
     UI[React page<br/>App.tsx]
     P[parseSse<br/>async generator]
+    R[redact.ts<br/>runs in the browser]
   end
-  subgraph "Node server (one process)"
-    API[Express<br/>app.ts]
+  EDGE[Cloudflare + Render proxies<br/>client IP is 3 hops away]
+  subgraph "Node server (app.ts)"
+    MW[rate limit + stream slots<br/>limits.ts / redis-stores.ts]
     RUN[scan-runner.ts]
     REV[review.ts<br/>mapLimit + retry]
-    G[guards.ts<br/>budget + breaker]
+    G[guards.ts<br/>spend budget + circuit breaker]
     SSE[sse.ts]
   end
   W[[Worker thread<br/>scan-worker.ts]]
   C[(Classifier<br/>fake.ts or llm.ts)]
+  RD[(Redis<br/>optional shared state)]
 
-  UI -- "POST /api/scan/stream" --> API
-  API --> RUN
+  UI -- "POST /api/scan/stream" --> EDGE --> MW
+  MW --> RUN
   RUN -. "large input" .-> W
   W -. "findings (copied)" .-> RUN
-  API --> REV --> G --> C
-  API --> SSE
-  SSE -- "event: scan / review / done" --> P --> UI
+  RUN --> REV --> G --> C
+  MW -. "counters (Lua)" .-> RD
+  G -. "spend budget (Lua)" .-> RD
+  RUN --> SSE
+  REV --> SSE
+  SSE -- "event: scan / review / done" --> EDGE --> P --> UI
+  UI --> R
 ```
+
+Solid arrows are the request path; dotted arrows are optional or off-thread. Without `REDIS_URL` the same
+counters and budget live in process memory, and nothing else changes. Redaction needs no server round trip.
 
 ### Repo layout
 
 ```text
+server/eval/      labeled samples (samples.json) and the `npm run eval` script
+docs/             demo GIF and screenshot used in this README
+Dockerfile        multi-stage build: web, then server, then a slim runtime image
+render.yaml       Render Blueprint: the web service and a Key Value (Redis) instance
+.github/workflows/ci.yml   lint, typecheck, test, build, plus a Docker smoke test
 server/src/
   index.ts        entry: reads env, wires everything, listens on 0.0.0.0:$PORT
   app.ts          Express routes: /health, POST /api/scan, POST /api/scan/stream, static files in prod
@@ -86,11 +111,14 @@ web/src/
 
 ### Request flow (`POST /api/scan/stream`)
 
-1. The browser sends `{ text }`. Zod validates it (1 to 100,000 characters; body capped at 200 kB). Invalid input gets a plain JSON `400` before any stream starts.
-2. `runScan` scans the text. Short input runs inline; input of `WORKER_MIN_CHARS` or more runs in a worker thread.
-3. The server sends `event: scan` right away with every rule-based finding, so highlights appear immediately.
-4. For each **ambiguous** finding, `review.ts` builds a masked snippet and asks the classifier, with at most 4 calls in flight and 2 retries with backoff. Each result is sent as `event: review` the moment it settles, so results can arrive out of order.
-5. `event: done` closes the stream. If the user cancels or disconnects, everything in step 2 to 4 is aborted.
+1. **Rate limit.** Every `/api` request is counted per client IP before the body is even parsed; over the limit gets `429` with `Retry-After`. The static site and `/health` are never limited.
+2. **Validate.** The browser sends `{ text }`. Zod checks it (1 to 100,000 characters; body capped at 200 kB). Invalid input gets a plain JSON `400` before any stream starts.
+3. **Stream slot.** The stream takes one of a limited number of open-stream slots (per IP and overall), or gets `429`. The slot is freed when the connection closes, however it closes.
+4. **Scan.** `runScan` scans the text. Short input runs inline; input of `WORKER_MIN_CHARS` or more runs in a worker thread.
+5. The server sends `event: scan` right away with every rule-based finding, so highlights appear immediately.
+6. **Review.** For each **ambiguous** finding, `review.ts` builds a masked snippet and asks the classifier, with at most 4 calls in flight and 2 retries with backoff. Every attempt is charged against the spend budget and checked by the circuit breaker. Each result is sent as `event: review` the moment it settles, so results can arrive out of order.
+7. `event: done` closes the stream. If the user cancels or disconnects, everything in steps 4 to 6 is aborted.
+8. **Redact** (optional, in the browser) turns the finished findings into placeholder text.
 
 Two request shapes exist on purpose: `/api/scan` waits and returns one JSON object (simple clients, tests), and `/api/scan/stream` is the streaming one the UI uses.
 
@@ -113,8 +141,10 @@ Both wrap whatever classifier is configured, so they work for the dummy and the 
 | **Spend budget** | Cumulative cost (every attempt, retries included) would pass `LLM_BUDGET_UNITS` | Reviews are refused instantly (never retried); rule-based results still return, with the reason shown in the UI |
 | **Circuit breaker** | `BREAKER_THRESHOLD` consecutive provider failures | Provider calls stop for `BREAKER_COOLDOWN_MS`, then a single probe is allowed; success closes it, failure re-opens it |
 
-The server degrades instead of crashing. `/health` shows both states. The budget is in-memory (no database
-by design), so it resets on restart; with a real provider, also set a spend cap on the provider's side.
+The server degrades instead of crashing. `/health` shows both states. By default the budget is in process memory,
+so it resets on restart; with `REDIS_URL` set it lives in Redis, shared across instances and resetting each month
+(see [Shared state with Redis](#shared-state-with-redis-optional)). With a real provider, also set a spend cap
+on the provider's side.
 
 ### Abuse limits
 
@@ -210,22 +240,23 @@ git push -> GitHub Actions CI -> checks pass? -> Render builds the Dockerfile ->
 ```
 
 **What runs on every push and pull request** (`.github/workflows/ci.yml`):
-- `check` job: install, lint, typecheck, test and build for `server` and `web`.
+
+- `check` job: install, lint, typecheck, test and build for `server` and `web`, with a real Redis service container so the Lua scripts are tested against the real engine.
 - `docker` job: builds the production image and smoke-tests `GET /health` inside the container.
 
-**On Render** (`render.yaml`): a Docker web service named `scanner` with `autoDeployTrigger: checksPass`,
-so a commit is deployed only after all its CI checks pass (and nothing deploys if no checks exist).
-`healthCheckPath: /health` gates the switch to the new version. The service defaults to `LLM_MODE=fake`
-with a small budget, so a public URL cannot spend real money.
+**On Render** (`render.yaml`), two resources:
+
+- a Docker web service named `scanner` with `autoDeployTrigger: checksPass`, so a commit is deployed only after all its CI checks pass (and nothing deploys if no checks exist). `healthCheckPath: /health` gates the switch to the new version. It defaults to `LLM_MODE=fake` with a small budget, so a public URL cannot spend real money, and sets `TRUST_PROXY_HOPS=3` (see [Abuse limits](#abuse-limits)).
+- a free Key Value (Redis-compatible) instance, `scanner-redis`, whose connection string is injected as `REDIS_URL`.
 
 **One-time setup** (the only manual part):
+
 1. Push this repo to GitHub.
-2. In Render: **New, then Blueprint**, pick the repo. It reads `render.yaml` and creates the service.
+2. In Render: **New, then Blueprint**, pick the repo. It reads `render.yaml` and creates both resources.
 3. Leave `LLM_API_KEY` empty unless you switch `LLM_MODE` to `anthropic`.
 4. Confirm the first deploy at the `onrender.com` URL: `/health` returns 200.
 
-After that, shipping is `git push`. Free-tier note: Render's free plan sleeps after inactivity, so the first
-request after a quiet period is slow.
+After that, shipping is `git push`, and later changes to `render.yaml` are synced by Render on their own. To see which commit is live, read `runtime.version` in `/health`. Free-tier note: Render's free plan sleeps after inactivity, so the first request after a quiet period is slow.
 
 ## What I would do next
 
