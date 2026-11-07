@@ -51,8 +51,10 @@ describe("labeled sample set", () => {
   // Floors sit just under today's numbers. Raise them as the rules improve; a drop fails CI.
   it("keeps detection quality above the floor", () => {
     const r = evaluate(samples, scanText);
-    expect(r.overall.precision!).toBeGreaterThanOrEqual(0.8);
+    expect(r.overall.precision!).toBeGreaterThanOrEqual(0.88);
     expect(r.overall.recall!).toBeGreaterThanOrEqual(0.85);
+    expect(r.byType.phone?.precision ?? 0).toBeGreaterThanOrEqual(0.8);
+    expect(r.byType.phone?.recall ?? 0).toBeGreaterThanOrEqual(0.75);
     expect(r.byConfidence.high.precision).toBe(1); // a "high" finding must never be wrong
     expect(r.byType.card?.recall).toBe(1);
     expect(r.byType.api_key?.recall).toBe(1);

@@ -245,5 +245,93 @@
     "id": "clean",
     "text": "The quick brown fox jumps over the lazy dog.",
     "expected": []
+  },
+  {
+    "id": "phone-sentence-end",
+    "text": "Call me on 555-123-4567. 2 pm works.",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-dash-aside",
+    "text": "Ring 555-123-4567 - 3 rings",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-intl-parens",
+    "text": "Dial +1 (555) 123-4567 now",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "+1 (555) 123-4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-two-commas",
+    "text": "Call 555-123-4567, 555-987-6543",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      },
+      {
+        "type": "phone",
+        "text": "555-987-6543"
+      }
+    ]
+  },
+  {
+    "id": "phone-uk-parens",
+    "text": "Office (020) 7946 0958",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "(020) 7946 0958"
+      }
+    ]
+  },
+  {
+    "id": "gap-seven-digit-local",
+    "text": "Local line 555-1234",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-1234"
+      }
+    ]
+  },
+  {
+    "id": "gap-space-separated-pair",
+    "text": "Call 555-123-4567 555-987-6543",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      },
+      {
+        "type": "phone",
+        "text": "555-987-6543"
+      }
+    ]
+  },
+  {
+    "id": "gap-isbn",
+    "text": "ISBN 978-3-16-148410-0",
+    "expected": []
+  },
+  {
+    "id": "gap-version-string",
+    "text": "Windows build 10.0.19045.2006",
+    "expected": []
   }
 ]

@@ -32,6 +32,22 @@ export function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+/**
+ * Decides whether a whole run of digit groups looks like a phone number.
+ * Rejects: bare digit runs (timestamps, ids), too few or too many digits (E.164 allows at most 15),
+ * IPv4 addresses, dates, and card-length numbers that pass Luhn (the card rule owns those).
+ */
+export function isPhoneShaped(token: string): boolean {
+  const hasSeparator = /[ .()-]/.test(token) || token.startsWith("+");
+  if (!hasSeparator) return false;
+  const digits = token.replace(/\D/g, "");
+  if (digits.length < 10 || digits.length > 15) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(token)) return false;
+  if (/^\d{4}[-./]\d{2}[-./]\d{2}$/.test(token)) return false;
+  if (digits.length >= 13 && luhn(digits)) return false;
+  return true;
+}
+
 // Patterns avoid nested quantifiers to stay safe from catastrophic backtracking.
 const RULES: Rule[] = [
   {
@@ -65,9 +81,14 @@ const RULES: Rule[] = [
     confidence: "ambiguous",
   },
   {
+    // Wide net, then judge the WHOLE token. A single regex cannot say "not part of a bigger number" without
+    // the engine re-parsing the same text another way, so the pattern takes the entire run of digit groups
+    // joined by single separators and isPhoneShaped() decides. Each repetition starts with a separator, so
+    // there is only one way to match and no catastrophic backtracking.
     type: "phone",
-    pattern: /(?<![\w-])\+?\d{1,3}?[ .-]?\(?\d{2,4}\)?[ .-]\d{3,4}[ .-]\d{3,4}(?![\w-])/g,
+    pattern: /(?<!\w)\+?\(?\d+\)?(?:[ .-]\(?\d+\)?)*/g,
     confidence: "ambiguous",
+    validate: isPhoneShaped,
   },
 ];
 
