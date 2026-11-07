@@ -160,3 +160,8 @@ mark.not_sensitive {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+h3 {
+  margin: 20px 0 0;
+  font-size: 1.1rem;
+}

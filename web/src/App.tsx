@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { redact, shouldRedact } from './redact'
 import { parseSse } from './sse'
 import { toSegments } from './segments'
 import { TYPE_LABELS, type Finding, type FindingType } from './types'
@@ -32,6 +33,8 @@ export default function App() {
   const [input, setInput] = useState(SAMPLE)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [hidden, setHidden] = useState<Set<FindingType>>(new Set())
+  const [showRedacted, setShowRedacted] = useState(false)
+  const [copied, setCopied] = useState(false)
   const controllerRef = useRef<AbortController | null>(null)
 
   // Abort any in-flight request on unmount.
@@ -45,6 +48,7 @@ export default function App() {
     const current = () => controllerRef.current === controller
     const scanned = input
     setStatus({ kind: 'loading' })
+    setShowRedacted(false)
     try {
       const res = await fetch('/api/scan/stream', {
         method: 'POST',
@@ -110,6 +114,23 @@ export default function App() {
     () => (status.kind === 'results' ? status.findings.filter((f) => !hidden.has(f.type)) : []),
     [status, hidden],
   )
+
+  // Visible findings act as the selection: unchecking a type keeps it in the output.
+  const redactedCount = visible.filter(shouldRedact).length
+  const redactedText = useMemo(
+    () => (status.kind === 'results' ? redact(status.text, visible) : ''),
+    [status, visible],
+  )
+
+  async function copyRedacted() {
+    try {
+      await navigator.clipboard.writeText(redactedText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard access can be blocked (e.g. insecure context); the text stays selectable in the box.
+    }
+  }
 
   function toggle(type: FindingType) {
     setHidden((prev) => {
@@ -197,6 +218,26 @@ export default function App() {
               ),
             )}
           </pre>
+          <div className="actions">
+            <button
+              onClick={() => setShowRedacted((s) => !s)}
+              disabled={running || (redactedCount === 0 && !showRedacted)}
+              title={running ? 'Wait for the review to finish' : undefined}
+            >
+              {showRedacted ? 'Hide redacted text' : `Redact ${redactedCount} item${redactedCount === 1 ? '' : 's'}`}
+            </button>
+          </div>
+          {showRedacted && (
+            <>
+              <h3>Redacted text</h3>
+              <pre className="result">{redactedText}</pre>
+              <div className="actions">
+                <button className="secondary" onClick={copyRedacted}>
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </>
+          )}
           <p className="legend">Dashed outline = ambiguous, not reviewed. Solid outline = LLM says sensitive. Faded = LLM says not sensitive. Hover for the reason.</p>
         </section>
       )}
