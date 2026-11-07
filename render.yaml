@@ -23,10 +23,11 @@ services:
         value: fake
       - key: LLM_BUDGET_UNITS
         value: "20"
-      # Cloudflare and Render each add a proxy hop in front of the container; counting from the right of
-      # X-Forwarded-For, the 2nd entry is the real client (clients cannot forge it).
+      # Measured on Render: X-Forwarded-For is "client, Cloudflare edge, Render internal" and the app sees a
+      # fourth address as the socket peer, so the real client is 3 hops from the app. Counting from the right
+      # means anything a client forges sits further left and is ignored.
       - key: TRUST_PROXY_HOPS
-        value: "2"
+        value: "3"
       - key: REDIS_URL
         fromService:
           type: keyvalue

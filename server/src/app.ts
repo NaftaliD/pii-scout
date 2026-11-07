@@ -26,7 +26,7 @@ export interface AppOptions {
   streamLimiter?: StreamSlots;
   /**
    * How many reverse-proxy hops to trust when reading the client IP from X-Forwarded-For.
-   * 0 = none (use the socket address). Behind Render this must be >= 1, or every visitor shares one IP.
+   * 0 = none (use the socket address). Behind Render this must be 3 (see render.yaml), or every visitor shares one IP.
    */
   trustProxyHops?: number;
 }
