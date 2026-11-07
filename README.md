@@ -4,8 +4,12 @@ A small full-stack TypeScript app that scans text for sensitive data (emails, ph
 API keys, ID numbers). Fast rules find candidates; ambiguous ones are sent to an LLM-style reviewer, and
 results stream to the browser as they finish.
 
+**Live demo:** <https://scanner-crgz.onrender.com>
+
+> **Note:** the demo runs on Render's free plan, which puts the service to sleep after about 15 minutes without traffic. The first request after that can take around 60 seconds while it wakes up; after that it is fast.
+
 > **Synthetic data only.** Do not paste real personal or secret data. By default the "LLM" is a free
-> dummy, so nothing leaves your machine.
+> dummy, so no text is ever sent to a third-party AI service.
 
 It is also a learning project about the **Node.js runtime**: the event loop, worker threads, streaming,
 cancellation, bounded concurrency and fail-safe design. See [Node runtime notes](#node-runtime-notes).
