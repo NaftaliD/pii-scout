@@ -1,0 +1,249 @@
+[
+  {
+    "id": "email-plain",
+    "text": "Contact jane.doe@example.com for access.",
+    "expected": [
+      {
+        "type": "email",
+        "text": "jane.doe@example.com"
+      }
+    ]
+  },
+  {
+    "id": "email-plus-subdomain",
+    "text": "Send to team+billing@sub.example.co.uk by Friday.",
+    "expected": [
+      {
+        "type": "email",
+        "text": "team+billing@sub.example.co.uk"
+      }
+    ]
+  },
+  {
+    "id": "email-two",
+    "text": "cc: a.b@x.org, c_d@y.net",
+    "expected": [
+      {
+        "type": "email",
+        "text": "a.b@x.org"
+      },
+      {
+        "type": "email",
+        "text": "c_d@y.net"
+      }
+    ]
+  },
+  {
+    "id": "email-obfuscated",
+    "text": "reach me at jane dot doe at example dot com",
+    "expected": [
+      {
+        "type": "email",
+        "text": "jane dot doe at example dot com"
+      }
+    ]
+  },
+  {
+    "id": "email-lookalike",
+    "text": "The ratio is 3@5 and the handle is @jane.",
+    "expected": []
+  },
+  {
+    "id": "card-visa-spaces",
+    "text": "Card 4111 1111 1111 1111 on file",
+    "expected": [
+      {
+        "type": "card",
+        "text": "4111 1111 1111 1111"
+      }
+    ]
+  },
+  {
+    "id": "card-dashes",
+    "text": "Pay with 5500-0000-0000-0004 please",
+    "expected": [
+      {
+        "type": "card",
+        "text": "5500-0000-0000-0004"
+      }
+    ]
+  },
+  {
+    "id": "card-amex",
+    "text": "Amex 378282246310005 expires soon",
+    "expected": [
+      {
+        "type": "card",
+        "text": "378282246310005"
+      }
+    ]
+  },
+  {
+    "id": "card-fails-luhn",
+    "text": "Tracking 4111 1111 1111 1112 delivered",
+    "expected": []
+  },
+  {
+    "id": "card-order-number",
+    "text": "Order 1234567890123456 confirmed",
+    "expected": []
+  },
+  {
+    "id": "key-aws",
+    "text": "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "expected": [
+      {
+        "type": "api_key",
+        "text": "AKIAIOSFODNN7EXAMPLE"
+      }
+    ]
+  },
+  {
+    "id": "key-sk",
+    "text": "OPENAI_KEY=sk-Ab3dEf6hIj9lMn2pQr5tUv8xYz0123456789",
+    "expected": [
+      {
+        "type": "api_key",
+        "text": "sk-Ab3dEf6hIj9lMn2pQr5tUv8xYz0123456789"
+      }
+    ]
+  },
+  {
+    "id": "key-github",
+    "text": "token ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8 leaked",
+    "expected": [
+      {
+        "type": "api_key",
+        "text": "ghp_a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
+      }
+    ]
+  },
+  {
+    "id": "key-lookalike",
+    "text": "sk-learn is a library and sk-1 is a label.",
+    "expected": []
+  },
+  {
+    "id": "id-ssn",
+    "text": "SSN 123-45-6789 on the form",
+    "expected": [
+      {
+        "type": "national_id",
+        "text": "123-45-6789"
+      }
+    ]
+  },
+  {
+    "id": "id-bare-nine",
+    "text": "Employee id 987654321 joined in May",
+    "expected": [
+      {
+        "type": "national_id",
+        "text": "987654321"
+      }
+    ]
+  },
+  {
+    "id": "id-order-nine",
+    "text": "Order 123456789 shipped",
+    "expected": []
+  },
+  {
+    "id": "id-timestamp",
+    "text": "created at 1700000000",
+    "expected": []
+  },
+  {
+    "id": "id-zip-plus-four",
+    "text": "ZIP 12345-6789",
+    "expected": []
+  },
+  {
+    "id": "phone-dashes",
+    "text": "Call 555-123-4567 today",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-parens",
+    "text": "Call (555) 123-4567 today",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "(555) 123-4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-intl-spaces",
+    "text": "Dial +1 555 123 4567 now",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "+1 555 123 4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-dots",
+    "text": "Fax 555.123.4567",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "555.123.4567"
+      }
+    ]
+  },
+  {
+    "id": "phone-uk",
+    "text": "London office +44 20 7946 0958",
+    "expected": [
+      {
+        "type": "phone",
+        "text": "+44 20 7946 0958"
+      }
+    ]
+  },
+  {
+    "id": "phone-date",
+    "text": "Meeting on 2026-11-07 at 10:30",
+    "expected": []
+  },
+  {
+    "id": "phone-ip",
+    "text": "Server 192.168.100.200 is down",
+    "expected": []
+  },
+  {
+    "id": "phone-version",
+    "text": "Node 24.1.0 and v1.2.3",
+    "expected": []
+  },
+  {
+    "id": "mixed",
+    "text": "Hi Jane, reach me at jane@example.com or 555-123-4567. Card 4111 1111 1111 1111.",
+    "expected": [
+      {
+        "type": "email",
+        "text": "jane@example.com"
+      },
+      {
+        "type": "phone",
+        "text": "555-123-4567"
+      },
+      {
+        "type": "card",
+        "text": "4111 1111 1111 1111"
+      }
+    ]
+  },
+  {
+    "id": "clean",
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "expected": []
+  }
+]
