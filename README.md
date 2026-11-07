@@ -63,12 +63,16 @@ flowchart LR
 server/src/
   index.ts        entry: reads env, wires everything, listens on 0.0.0.0:$PORT
   app.ts          Express routes: /health, POST /api/scan, POST /api/scan/stream, static files in prod
-  scanner.ts      pure rules: regex + Luhn check -> Finding[]
+  scanner.ts      pure rules: regex + validators (Luhn for cards, whole-token checks for phones) -> Finding[]
   scan-runner.ts  runs the scanner inline or in a worker thread
   scan-worker.ts  the worker thread's entry file
   review.ts       privacy masking, sends ambiguous findings to the classifier
   async.ts        sleep, retry (exponential backoff), mapLimit (concurrency cap); all abort-aware
   guards.ts       SpendBudget + CircuitBreaker, wrapped around any classifier
+  limits.ts       in-memory RateLimiter + ConcurrencyLimiter (stream cap)
+  stores.ts       interfaces for shared state (rate limit, stream slots, budget)
+  redis-stores.ts Redis versions of those, using atomic Lua scripts
+  evaluate.ts     precision / recall over a labeled sample set (see Evaluation)
   fake.ts         free dummy classifier: random latency, answers and failures
   llm.ts          real Anthropic classifier (optional)
   sse.ts          Server-Sent Events helper with heartbeat
@@ -77,6 +81,7 @@ web/src/
   App.tsx         the page and its state machine
   sse.ts          parseSse(): async generator turning a byte stream into events
   segments.ts     splits text into plain / highlighted pieces
+  redact.ts       replaces findings with placeholders such as [EMAIL] and [ID]
 ```
 
 ### Request flow (`POST /api/scan/stream`)
@@ -88,6 +93,10 @@ web/src/
 5. `event: done` closes the stream. If the user cancels or disconnects, everything in step 2 to 4 is aborted.
 
 Two request shapes exist on purpose: `/api/scan` waits and returns one JSON object (simple clients, tests), and `/api/scan/stream` is the streaming one the UI uses.
+
+### Redact
+
+After a scan, **Redact** replaces each finding with a placeholder (`[EMAIL]`, `[PHONE]`, `[CARD]`, `[API_KEY]`, `[ID]`) and offers a Copy button. It runs entirely in the browser (`web/src/redact.ts`): the text and the findings' offsets are already there, so nothing is sent anywhere. The type filters act as a selection (an unchecked type stays in the output), matches the reviewer judged not sensitive are kept, and unreviewed ambiguous matches are redacted because over-redacting is the safe way to be wrong. The button is disabled while reviews are still running so the output cannot change under you.
 
 ### Privacy
 
@@ -151,7 +160,11 @@ Try these to see the guards fire: `FAKE_FAILURE_RATE=1` (breaker opens), `LLM_BU
 
 ## Evaluation
 
-`cd server && npm run eval` scores the rule scanner against a hand-labeled set of synthetic samples (`server/eval/samples.json`) and prints precision (when we flag something, how often is it right?) and recall (how much of the real data do we catch?), per type and per rule-confidence tier. Current result: **high-confidence findings are 100% precise; ambiguous ones are only about 60% precise**, which is the reason the review step exists. It also lists known gaps: obfuscated emails (`jane dot doe at example dot com`), phone numbers in `(555) 123-4567` form (the leading parenthesis is cut off), and IP addresses or card-like tracking numbers being flagged as phones. A test runs the same evaluation in CI and fails if quality drops below a floor.
+`cd server && npm run eval` scores the rule scanner against a hand-labeled set of synthetic samples (`server/eval/samples.json`, 38 samples) and prints precision (when we flag something, how often is it right?) and recall (how much of the real data do we catch?), per type and per rule-confidence tier. Current result: **90% precision and 87% recall overall; high-confidence findings are 100% precise, ambiguous ones about 80%**, which is the reason the review step exists. A test runs the same evaluation in CI and fails if quality drops below a floor.
+
+**How the phone rule evolved** (a good example of using the evaluation to drive a change). The first version was one regex, and it had three structural bugs: it cut the opening parenthesis off `(555) 123-4567` (the country-code group was *lazy*, not *optional*), flagged IP addresses such as `192.168.100.200`, and flagged card-shaped numbers that fail Luhn. Adding an end-of-match lookahead ("not followed by separators and a digit") only moved the problem: the engine re-parsed the same text another way (an IP matched in full, a number matched from the middle) and new false negatives appeared (`555-123-4567. 2 pm`). The fix was to change the question: one simple pattern grabs the whole run of digit groups joined by single separators, and `isPhoneShaped()` judges the whole token (needs a separator, 10 to 15 digits, not IPv4-shaped, not a date, not a Luhn-valid card number).
+
+**Known gaps, kept in the sample set on purpose:** obfuscated emails (`jane dot doe at example dot com`), 7-digit local numbers (`555-1234`), two numbers separated by a single space (they merge into one over-long token), and lookalikes such as an ISBN or a Windows version string (`10.0.19045.2006`) flagged as phones. Bare 9-digit numbers are ambiguous by design and left to the reviewer.
 
 The scores cover the rules only. The reviewer is a random dummy by default, so scoring it would be meaningless; with a real model, running the same set through the review step would show whether it actually improves precision.
 
@@ -216,4 +229,4 @@ request after a quiet period is slow.
 
 ## What I would do next
 
-A chunked, streaming scan across a worker pool (overlapping chunks, dedupe at chunk borders), fixes for the rule gaps the evaluation found (parenthesized phone numbers, IPs flagged as phones), running the evaluation through a real model to measure the reviewer, durable spend tracking (the free Redis plan has no persistence), metrics and tracing, and auth.
+A chunked, streaming scan across a worker pool (overlapping chunks, dedupe at chunk borders), closing the known gaps above (for example splitting over-long phone tokens, or benchmarking `libphonenumber-js` against the hand-written rule), running the evaluation through a real model to measure the reviewer, durable spend tracking (the free Redis plan has no persistence), metrics and tracing, and auth.
