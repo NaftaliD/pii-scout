@@ -1,4 +1,4 @@
-# Sensitive Data Scanner
+# pii-scout - Sensitive Data Scanner
 
 A small full-stack TypeScript app that scans text for sensitive data (emails, phone numbers, card numbers,
 API keys, ID numbers). Fast rules find candidates; ambiguous ones are sent to an LLM-style reviewer, and
@@ -105,6 +105,13 @@ Both wrap whatever classifier is configured, so they work for the dummy and the 
 The server degrades instead of crashing. `/health` shows both states. The budget is in-memory (no database
 by design), so it resets on restart; with a real provider, also set a spend cap on the provider's side.
 
+### Abuse limits
+
+- **Rate limit:** a fixed-window counter per IP (`limits.ts`); over the limit gets `429` with `Retry-After`. It runs before the body parser, so a refused request costs almost nothing. Expired entries are swept lazily, so the map cannot grow forever.
+- **Stream cap:** each open stream holds a connection and up to 4 review calls, so open streams are capped per IP and overall. The slot is released on the response's `close` event, which fires on normal end, error and client abort.
+- **Proxy gotcha:** behind Render every request arrives via the proxy. Without `trust proxy` all visitors share one IP (and one limit); trusting too many hops lets clients spoof `X-Forwarded-For`. Both cases are tested in `app.limits.test.ts`.
+- **Limit:** counters live in one process's memory, so they reset on deploy and are not shared between instances (that would need Redis or a gateway).
+
 ### Configuration
 
 All optional. Names are listed in `.env.example`; never commit real values.
@@ -119,8 +126,17 @@ All optional. Names are listed in `.env.example`; never commit real values.
 | `FAKE_MIN_MS` / `FAKE_MAX_MS` / `FAKE_FAILURE_RATE` | `300` / `2500` / `0.2` | Dummy latency range and failure probability |
 | `FAKE_SCAN_CPU_MS` | `0` | Artificial CPU cost per scan, for the event-loop demo |
 | `WORKER_MIN_CHARS` | `20000` | Input size at which scanning moves to a worker thread |
+| `RATE_LIMIT_PER_MIN` | `20` | Requests per IP per minute on `/api` |
+| `MAX_STREAMS_PER_IP` / `MAX_STREAMS_TOTAL` | `2` / `20` | Simultaneous open streams |
+| `TRUST_PROXY_HOPS` | `1` in production, else `0` | Reverse-proxy hops trusted when reading the client IP |
 
 Try these to see the guards fire: `FAKE_FAILURE_RATE=1` (breaker opens), `LLM_BUDGET_UNITS=2` (budget runs out).
+
+## Evaluation
+
+`cd server && npm run eval` scores the rule scanner against a hand-labeled set of synthetic samples (`server/eval/samples.json`) and prints precision (when we flag something, how often is it right?) and recall (how much of the real data do we catch?), per type and per rule-confidence tier. Current result: **high-confidence findings are 100% precise; ambiguous ones are only about 60% precise**, which is the reason the review step exists. It also lists known gaps: obfuscated emails (`jane dot doe at example dot com`), phone numbers in `(555) 123-4567` form (the leading parenthesis is cut off), and IP addresses or card-like tracking numbers being flagged as phones. A test runs the same evaluation in CI and fails if quality drops below a floor.
+
+The scores cover the rules only. The reviewer is a random dummy by default, so scoring it would be meaningless; with a real model, running the same set through the review step would show whether it actually improves precision.
 
 ## Node runtime notes
 
@@ -181,10 +197,6 @@ with a small budget, so a public URL cannot spend real money.
 After that, shipping is `git push`. Free-tier note: Render's free plan sleeps after inactivity, so the first
 request after a quiet period is slow.
 
-> The Docker image has not been built on the author's machine (Docker is not installed there); the CI `docker`
-> job is the first real test of it.
-
 ## What I would do next
 
-Per-IP rate limiting, a reusable worker pool, an evaluation script (precision and recall on a labeled set),
-persistent spend tracking, metrics and tracing, and auth.
+A chunked, streaming scan across a worker pool (overlapping chunks, dedupe at chunk borders), fixes for the rule gaps the evaluation found (parenthesized phone numbers, IPs flagged as phones), running the evaluation through a real model to measure the reviewer, persistent spend tracking and shared rate-limit state (Redis), metrics and tracing, and auth.
