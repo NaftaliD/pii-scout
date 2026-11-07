@@ -1,10 +1,10 @@
 import path from "node:path";
 import express from "express";
 import { z } from "zod";
-import { ConcurrencyLimiter, RateLimiter } from "./limits";
 import { reviewFindings, type Classifier } from "./review";
 import { runScan, type ScanOptions } from "./scan-runner";
 import { openSse } from "./sse";
+import type { MaybePromise, RateLimit, StreamSlots } from "./stores";
 
 export const MAX_TEXT_LENGTH = 100_000;
 
@@ -16,14 +16,14 @@ export interface AppOptions {
   /** When absent, ambiguous findings are returned unreviewed. */
   classifier?: Classifier;
   /** Extra info for /health (e.g. budget and breaker state). */
-  llmStatus?: () => unknown;
+  llmStatus?: () => MaybePromise<unknown>;
   /** Extra runtime info for /health (e.g. event-loop lag). */
-  runtimeStatus?: () => unknown;
+  runtimeStatus?: () => MaybePromise<unknown>;
   scan?: Omit<ScanOptions, "signal">;
   /** Per-IP request limit for /api. */
-  rateLimiter?: RateLimiter;
+  rateLimiter?: RateLimit;
   /** Caps simultaneous open streams, per IP and overall. */
-  streamLimiter?: ConcurrencyLimiter;
+  streamLimiter?: StreamSlots;
   /**
    * How many reverse-proxy hops to trust when reading the client IP from X-Forwarded-For.
    * 0 = none (use the socket address). Behind Render this must be >= 1, or every visitor shares one IP.
@@ -37,8 +37,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.set("trust proxy", opts.trustProxyHops ?? 0);
 
   // Before the body parser: a refused request should cost almost nothing.
-  app.use("/api", (req, res, next) => {
-    const verdict = opts.rateLimiter?.hit(req.ip ?? "unknown");
+  app.use("/api", async (req, res, next) => {
+    const verdict = await opts.rateLimiter?.hit(req.ip ?? "unknown");
     if (verdict && !verdict.allowed) {
       res.set("Retry-After", String(Math.ceil(verdict.retryAfterMs / 1000)));
       res.status(429).json({ error: "Too many requests. Please wait a moment and try again." });
@@ -49,8 +49,8 @@ export function createApp(opts: AppOptions = {}): express.Express {
 
   app.use(express.json({ limit: "200kb" }));
 
-  app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok", llm: opts.llmStatus?.(), runtime: opts.runtimeStatus?.() });
+  app.get("/health", async (_req, res) => {
+    res.status(200).json({ status: "ok", llm: await opts.llmStatus?.(), runtime: await opts.runtimeStatus?.() });
   });
 
   function parseBody(req: express.Request, res: express.Response): string | null {
@@ -86,19 +86,30 @@ export function createApp(opts: AppOptions = {}): express.Express {
     const text = parseBody(req, res);
     if (text === null) return;
 
-    // Reserve a stream slot; "close" fires on normal end, error and client abort, so it is always freed.
-    const release = opts.streamLimiter?.acquire(req.ip ?? "unknown");
-    if (opts.streamLimiter && !release) {
-      res.status(429).json({ error: "Too many scans in progress. Please wait for one to finish." });
-      return;
-    }
-
-    // `res` (not `req`) emits "close" when the client disconnects mid-stream.
+    // `res` (not `req`) emits "close" when the client disconnects mid-stream. It also fires on normal end
+    // and on errors, so it is the one place the stream slot is freed.
+    // Registered BEFORE awaiting the limiter: with an async store the client can disconnect while we wait.
     const ac = new AbortController();
+    let release: (() => MaybePromise<void>) | null = null;
+    let closed = false;
     res.on("close", () => {
+      closed = true;
       ac.abort();
-      release?.();
+      void release?.();
     });
+
+    if (opts.streamLimiter) {
+      release = await opts.streamLimiter.acquire(req.ip ?? "unknown");
+      if (!release) {
+        res.status(429).json({ error: "Too many scans in progress. Please wait for one to finish." });
+        return;
+      }
+      if (closed) {
+        // Gone while we were waiting: the close handler ran before we held a slot, so free it here.
+        await release();
+        return;
+      }
+    }
     const sse = openSse(res);
 
     try {

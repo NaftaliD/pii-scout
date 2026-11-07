@@ -1,4 +1,5 @@
 import type { Classifier } from "./review";
+import type { Budget } from "./stores";
 
 /** Thrown when a safety guard refuses a call. Never retried: retrying would defeat the guard. */
 export class HaltError extends Error {
@@ -16,6 +17,10 @@ export class SpendBudget {
   private spentUnits = 0;
 
   constructor(readonly limit: number) {}
+
+  status(): { spent: number; limit: number } {
+    return { spent: this.spentUnits, limit: this.limit };
+  }
 
   charge(units: number): void {
     if (this.spentUnits + units > this.limit) {
@@ -75,7 +80,7 @@ export class CircuitBreaker {
 }
 
 export interface Guards {
-  budget: SpendBudget;
+  budget: Budget;
   breaker: CircuitBreaker;
   costPerCall: number;
 }
@@ -84,7 +89,7 @@ export interface Guards {
 export function guardClassifier(classify: Classifier, g: Guards): Classifier {
   return (req, signal) =>
     g.breaker.run(async () => {
-      g.budget.charge(g.costPerCall);
+      await g.budget.charge(g.costPerCall);
       return classify(req, signal);
     });
 }

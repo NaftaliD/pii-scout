@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp, type AppOptions } from "./app";
 import { sleep } from "./async";
 import { ConcurrencyLimiter, RateLimiter } from "./limits";
+import type { StreamSlots } from "./stores";
 
 let server: ReturnType<ReturnType<typeof createApp>["listen"]> | undefined;
 afterEach(() => {
@@ -48,11 +49,13 @@ describe("rate limiting", () => {
   });
 });
 
+const slowClassifier = async (_r: unknown, signal?: AbortSignal) => {
+  await sleep(10_000, signal);
+  return { label: "sensitive" as const, reason: "r" };
+};
+
 describe("stream cap", () => {
-  const slow = async (_r: unknown, signal?: AbortSignal) => {
-    await sleep(10_000, signal);
-    return { label: "sensitive" as const, reason: "r" };
-  };
+  const slow = slowClassifier;
 
   it("refuses a stream over the cap and frees the slot when the client disconnects", async () => {
     const streams = new ConcurrencyLimiter(1, 10);
@@ -71,5 +74,27 @@ describe("stream cap", () => {
     const again = new AbortController();
     expect((await scan(base, "/api/scan/stream", {}, again.signal)).status).toBe(200);
     again.abort();
+  });
+
+  it("frees the slot when the client disconnects while an async limiter is still deciding", async () => {
+    // Like a Redis round trip: the slot is granted only after a delay.
+    let held = 0;
+    const slow: StreamSlots = {
+      async acquire() {
+        await sleep(150);
+        held++;
+        return async () => {
+          held--;
+        };
+      },
+    };
+    const base = start({ classifier: slowClassifier, streamLimiter: slow });
+    const ac = new AbortController();
+    const pending = scan(base, "/api/scan/stream", {}, ac.signal).catch(() => undefined);
+    await sleep(30);
+    ac.abort(); // client leaves before the slot is even granted
+    await pending;
+    await sleep(400);
+    expect(held).toBe(0);
   });
 });

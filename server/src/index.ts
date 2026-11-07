@@ -1,6 +1,8 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { Redis } from "ioredis";
 import { createApp } from "./app";
 import { ConcurrencyLimiter, RateLimiter } from "./limits";
+import { RedisBudget, RedisRateLimiter, RedisStreamSlots, warnOnce } from "./redis-stores";
 import { DEFAULT_WORKER_MIN_CHARS } from "./scan-runner";
 import { createFakeClassifier } from "./fake";
 import { CircuitBreaker, SpendBudget, guardClassifier } from "./guards";
@@ -27,7 +29,31 @@ if (mode === "anthropic") {
   });
 }
 
-const budget = new SpendBudget(num("LLM_BUDGET_UNITS", 20));
+// Shared state (rate limits, stream slots, spend) lives in Redis when REDIS_URL is set, else in this process.
+// Fail fast instead of queueing commands while Redis is down: the stores decide whether to fail open or closed.
+const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, {
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3000,
+      commandTimeout: 1000,
+    })
+  : undefined;
+// Without a listener, an "error" event (e.g. Redis unreachable) would crash the process.
+// ioredis retries every few hundred ms, so throttle the log line.
+redis?.on("error", (err) => warnOnce(`redis: ${err.message}`));
+
+const rateMax = num("RATE_LIMIT_PER_MIN", 20);
+const streamsPerIp = num("MAX_STREAMS_PER_IP", 2);
+const streamsTotal = num("MAX_STREAMS_TOTAL", 20);
+const budgetLimit = num("LLM_BUDGET_UNITS", 20);
+
+const rateLimiter = redis ? new RedisRateLimiter(redis, rateMax, 60_000) : new RateLimiter(rateMax, 60_000);
+const streamLimiter = redis
+  ? new RedisStreamSlots(redis, streamsPerIp, streamsTotal)
+  : new ConcurrencyLimiter(streamsPerIp, streamsTotal);
+const budget = redis ? new RedisBudget(redis, budgetLimit) : new SpendBudget(budgetLimit);
+
 const breaker = new CircuitBreaker(num("BREAKER_THRESHOLD", 5), num("BREAKER_COOLDOWN_MS", 30_000));
 const classifier = guardClassifier(provider, { budget, breaker, costPerCall: num("LLM_COST_PER_CALL", 1) });
 
@@ -37,8 +63,8 @@ loop.enable();
 
 createApp({
   classifier,
-  rateLimiter: new RateLimiter(num("RATE_LIMIT_PER_MIN", 20), 60_000),
-  streamLimiter: new ConcurrencyLimiter(num("MAX_STREAMS_PER_IP", 2), num("MAX_STREAMS_TOTAL", 20)),
+  rateLimiter,
+  streamLimiter,
   // Render puts one proxy in front of the container; locally there is none.
   trustProxyHops: num("TRUST_PROXY_HOPS", process.env.NODE_ENV === "production" ? 1 : 0),
   scan: {
@@ -46,11 +72,17 @@ createApp({
     workerMinChars: num("WORKER_MIN_CHARS", DEFAULT_WORKER_MIN_CHARS),
   },
   runtimeStatus: () => {
-    const status = { eventLoopMaxDelayMs: Math.round(loop.max / 1e6), eventLoopP99DelayMs: Math.round(loop.percentile(99) / 1e6) };
+    const status = {
+      // Render sets RENDER_GIT_COMMIT, so /health shows which commit is actually live.
+      version: process.env.RENDER_GIT_COMMIT?.slice(0, 7),
+      store: redis ? `redis (${redis.status})` : "memory",
+      eventLoopMaxDelayMs: Math.round(loop.max / 1e6),
+      eventLoopP99DelayMs: Math.round(loop.percentile(99) / 1e6),
+    };
     loop.reset(); // report the window since the last /health call
     return status;
   },
-  llmStatus: () => ({ mode, budget: { spent: budget.spent, limit: budget.limit }, breaker: breaker.state }),
+  llmStatus: async () => ({ mode, budget: await budget.status(), breaker: breaker.state }),
 }).listen(port, "0.0.0.0", () => {
-  console.log(`scanner listening on 0.0.0.0:${port} (llm mode: ${mode})`);
+  console.log(`scanner listening on 0.0.0.0:${port} (llm mode: ${mode}, state store: ${redis ? "redis" : "memory"})`);
 });
