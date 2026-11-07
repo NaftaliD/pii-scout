@@ -1,5 +1,6 @@
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { createApp } from "./app";
+import { ConcurrencyLimiter, RateLimiter } from "./limits";
 import { DEFAULT_WORKER_MIN_CHARS } from "./scan-runner";
 import { createFakeClassifier } from "./fake";
 import { CircuitBreaker, SpendBudget, guardClassifier } from "./guards";
@@ -36,6 +37,10 @@ loop.enable();
 
 createApp({
   classifier,
+  rateLimiter: new RateLimiter(num("RATE_LIMIT_PER_MIN", 20), 60_000),
+  streamLimiter: new ConcurrencyLimiter(num("MAX_STREAMS_PER_IP", 2), num("MAX_STREAMS_TOTAL", 20)),
+  // Render puts one proxy in front of the container; locally there is none.
+  trustProxyHops: num("TRUST_PROXY_HOPS", process.env.NODE_ENV === "production" ? 1 : 0),
   scan: {
     cpuBurnMs: num("FAKE_SCAN_CPU_MS", 0),
     workerMinChars: num("WORKER_MIN_CHARS", DEFAULT_WORKER_MIN_CHARS),
