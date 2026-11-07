@@ -42,6 +42,7 @@ Each feature is chosen because it forces you to use one interview topic for real
 | 9 | Input validation | Request schema validation and a body size limit | Backend hygiene, TypeScript types at the boundary |
 | 10 | Evaluation script | Runs the scanner against a labeled set and prints precision and recall | Not trusting LLM output without measuring it |
 | 11 | Privacy guard | Redacts or masks obvious secrets before anything is sent to the LLM; logs never contain input text | Security mindset (Cyera's domain) |
+| 12 | Chunked streaming scan (stretch) | Split large input into overlapping chunks, scan them in a worker pool, and stream findings to the browser as each chunk finishes | Worker pools, async generators, backpressure, boundary and dedupe bugs |
 
 **Minimum viable version.** Capabilities 1, 3, 8 and 9. Everything else is added in the order above only if time allows; 2, 6 and 7 are the most valuable for the interview, so do those before 10.
 
@@ -212,6 +213,7 @@ Each milestone ends with something you can run. Hours are estimates for a develo
 | 5 | Worker thread (2) | A large input is scanned without freezing other requests (test by hitting `/health` during a scan) | 1.5 |
 | 6 | Deploy (infra section) | Live `onrender.com` URL; a push redeploys | 1 |
 | 7 | Evaluation and privacy guard (10, 11), README with diagram | Precision and recall printed; README explains trade-offs | 1.5 |
+| 7b | Chunked streaming scan (12), after deploy is live | Findings appear chunk by chunk; matches that straddle chunk borders are found exactly once | 2 |
 | 8 | Rehearse the 3-minute walkthrough out loud | You can explain every file and answer "what would you change for production?" | 2 |
 
 **Definition of done.**
