@@ -1,4 +1,14 @@
 services:
+  # Shared state for rate limits, stream slots and the spend budget. In-memory only (no persistence)
+  # on the free plan, which is fine for counters.
+  - type: keyvalue
+    name: scanner-redis
+    plan: free
+    # noeviction: when full, refuse writes instead of silently deleting keys (the spend counter must not vanish).
+    maxmemoryPolicy: noeviction
+    # Empty list = reachable only from other Render services in the same region, not from the internet.
+    ipAllowList: []
+
   - type: web
     name: scanner
     runtime: docker
@@ -13,6 +23,11 @@ services:
         value: fake
       - key: LLM_BUDGET_UNITS
         value: "20"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: scanner-redis
+          property: connectionString
       # Only needed if LLM_MODE is switched to "anthropic" in the dashboard.
       - key: LLM_API_KEY
         sync: false
