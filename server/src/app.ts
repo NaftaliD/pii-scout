@@ -3,6 +3,7 @@ import express from "express";
 import { z } from "zod";
 import { reviewFindings, type Classifier } from "./review";
 import { scanText } from "./scanner";
+import { openSse } from "./sse";
 
 export const MAX_TEXT_LENGTH = 100_000;
 
@@ -13,6 +14,8 @@ const scanRequest = z.object({
 export interface AppOptions {
   /** When absent, ambiguous findings are returned unreviewed. */
   classifier?: Classifier;
+  /** Extra info for /health (e.g. budget and breaker state). */
+  llmStatus?: () => unknown;
 }
 
 export function createApp(opts: AppOptions = {}): express.Express {
@@ -21,16 +24,22 @@ export function createApp(opts: AppOptions = {}): express.Express {
   app.use(express.json({ limit: "200kb" }));
 
   app.get("/health", (_req, res) => {
-    res.status(200).json({ status: "ok" });
+    res.status(200).json({ status: "ok", llm: opts.llmStatus?.() });
   });
 
-  app.post("/api/scan", async (req, res) => {
+  function parseBody(req: express.Request, res: express.Response): string | null {
     const parsed = scanRequest.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid request", issues: parsed.error.issues });
-      return;
+      return null;
     }
-    const { text } = parsed.data;
+    return parsed.data.text;
+  }
+
+  // Simple request/response version: waits for every review, then answers once.
+  app.post("/api/scan", async (req, res) => {
+    const text = parseBody(req, res);
+    if (text === null) return;
     const findings = scanText(text);
     if (!opts.classifier) {
       res.json({ findings });
@@ -43,6 +52,39 @@ export function createApp(opts: AppOptions = {}): express.Express {
       res.json({ findings: await reviewFindings(text, findings, opts.classifier, { signal: ac.signal }) });
     } catch {
       if (!res.headersSent) res.status(499).end();
+    }
+  });
+
+  // Streaming version: rule findings first, then one `review` event per ambiguous finding as it settles.
+  app.post("/api/scan/stream", async (req, res) => {
+    const text = parseBody(req, res);
+    if (text === null) return;
+
+    // `res` (not `req`) emits "close" when the client disconnects mid-stream.
+    const ac = new AbortController();
+    res.on("close", () => ac.abort());
+    const sse = openSse(res);
+
+    try {
+      const findings = scanText(text);
+      sse.send("scan", { findings });
+      if (opts.classifier) {
+        await reviewFindings(text, findings, opts.classifier, {
+          signal: ac.signal,
+          onReviewed: (index, f) =>
+            sse.send("review", {
+              index,
+              review: f.review,
+              reviewError: f.reviewError,
+              reviewHalt: f.reviewHalt,
+            }),
+        });
+      }
+      sse.send("done", {});
+    } catch {
+      if (!ac.signal.aborted) sse.send("error", { message: "Scan failed" });
+    } finally {
+      sse.end();
     }
   });
 

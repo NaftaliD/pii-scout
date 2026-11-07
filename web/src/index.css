@@ -155,3 +155,8 @@ mark.not_sensitive {
   opacity: 0.45;
   outline: none;
 }
+
+.status {
+  color: var(--muted);
+  font-size: 0.9rem;
+}

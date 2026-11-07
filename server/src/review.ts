@@ -1,4 +1,5 @@
 import { mapLimit, retry } from "./async";
+import { HaltError } from "./guards";
 import type { Finding } from "./scanner";
 
 export interface Review {
@@ -14,7 +15,19 @@ export interface ReviewRequest {
 
 export type Classifier = (req: ReviewRequest, signal?: AbortSignal) => Promise<Review>;
 
-export type ReviewedFinding = Finding & { review?: Review; reviewError?: string };
+export type ReviewedFinding = Finding & {
+  review?: Review;
+  reviewError?: string;
+  /** Set when a safety guard (budget / circuit breaker) skipped the review. */
+  reviewHalt?: HaltError["code"];
+};
+
+export interface ReviewOptions {
+  signal?: AbortSignal;
+  retryBaseMs?: number;
+  /** Called as soon as one finding's review settles, with its index in the findings array. */
+  onReviewed?: (index: number, finding: ReviewedFinding) => void;
+}
 
 const CONTEXT_CHARS = 40;
 const MAX_IN_FLIGHT = 4;
@@ -45,25 +58,33 @@ export async function reviewFindings(
   text: string,
   findings: Finding[],
   classify: Classifier,
-  opts: { signal?: AbortSignal; retryBaseMs?: number } = {},
+  opts: ReviewOptions = {},
 ): Promise<ReviewedFinding[]> {
   const out: ReviewedFinding[] = findings.map((f) => ({ ...f }));
-  const ambiguous = out.filter((f) => f.confidence === "ambiguous");
+  const todo = out.map((f, index) => ({ f, index })).filter(({ f }) => f.confidence === "ambiguous");
   await mapLimit(
-    ambiguous,
+    todo,
     MAX_IN_FLIGHT,
-    async (f) => {
+    async ({ f, index }) => {
       const req: ReviewRequest = { type: f.type, context: buildContext(text, f, findings) };
       try {
         f.review = await retry(() => classify(req, opts.signal), {
           retries: 2,
           baseMs: opts.retryBaseMs ?? 500,
           signal: opts.signal,
+          // A guard refusing the call is a decision, not a glitch: retrying would defeat it.
+          shouldRetry: (err) => !(err instanceof HaltError),
         });
       } catch (err) {
         if (opts.signal?.aborted) throw err;
-        f.reviewError = "Review unavailable";
+        if (err instanceof HaltError) {
+          f.reviewHalt = err.code;
+          f.reviewError = err.message;
+        } else {
+          f.reviewError = "Review unavailable";
+        }
       }
+      opts.onReviewed?.(index, f);
     },
     opts.signal,
   );

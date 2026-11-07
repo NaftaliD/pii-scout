@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { parseSse } from './sse'
 import { toSegments } from './segments'
 import { TYPE_LABELS, type Finding, type FindingType } from './types'
 
@@ -18,7 +19,14 @@ type Status =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'done'; text: string; findings: Finding[] }
+  | { kind: 'results'; text: string; findings: Finding[]; running: boolean; cancelled: boolean }
+
+interface ReviewEvent {
+  index: number
+  review?: Finding['review']
+  reviewError?: string
+  reviewHalt?: Finding['reviewHalt']
+}
 
 export default function App() {
   const [input, setInput] = useState(SAMPLE)
@@ -33,41 +41,73 @@ export default function App() {
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
+    // Ignore anything from a scan that has since been replaced or cancelled.
+    const current = () => controllerRef.current === controller
+    const scanned = input
     setStatus({ kind: 'loading' })
     try {
-      const res = await fetch('/api/scan', {
+      const res = await fetch('/api/scan/stream', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: input }),
+        body: JSON.stringify({ text: scanned }),
         signal: controller.signal,
       })
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null
         throw new Error(body?.error ?? `Request failed (${res.status})`)
       }
-      const data = (await res.json()) as { findings: Finding[] }
-      setStatus({ kind: 'done', text: input, findings: data.findings })
+      for await (const { event, data } of parseSse(res.body)) {
+        if (!current()) return
+        if (event === 'scan') {
+          const { findings } = data as { findings: Finding[] }
+          setStatus({
+            kind: 'results',
+            text: scanned,
+            findings,
+            running: findings.some((f) => f.confidence === 'ambiguous'),
+            cancelled: false,
+          })
+        } else if (event === 'review') {
+          const r = data as ReviewEvent
+          setStatus((prev) =>
+            prev.kind !== 'results'
+              ? prev
+              : {
+                  ...prev,
+                  findings: prev.findings.map((f, i) =>
+                    i === r.index
+                      ? { ...f, review: r.review, reviewError: r.reviewError, reviewHalt: r.reviewHalt }
+                      : f,
+                  ),
+                },
+          )
+        } else if (event === 'done') {
+          setStatus((prev) => (prev.kind === 'results' ? { ...prev, running: false } : prev))
+        } else if (event === 'error') {
+          throw new Error('Scan failed on the server')
+        }
+      }
     } catch (err) {
-      if (controller.signal.aborted) return
+      if (!current() || controller.signal.aborted) return
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : 'Something went wrong' })
     }
   }
 
   function cancel() {
     controllerRef.current?.abort()
-    setStatus({ kind: 'idle' })
+    setStatus((prev) => (prev.kind === 'results' ? { ...prev, running: false, cancelled: true } : { kind: 'idle' }))
   }
 
   const counts = useMemo(() => {
     const c = new Map<FindingType, number>()
-    if (status.kind === 'done') {
+    if (status.kind === 'results') {
       for (const f of status.findings) c.set(f.type, (c.get(f.type) ?? 0) + 1)
     }
     return c
   }, [status])
 
   const visible = useMemo(
-    () => (status.kind === 'done' ? status.findings.filter((f) => !hidden.has(f.type)) : []),
+    () => (status.kind === 'results' ? status.findings.filter((f) => !hidden.has(f.type)) : []),
     [status, hidden],
   )
 
@@ -80,7 +120,13 @@ export default function App() {
     })
   }
 
-  const loading = status.kind === 'loading'
+  const running = status.kind === 'loading' || (status.kind === 'results' && status.running)
+  const loading = running
+  const pending =
+    status.kind === 'results'
+      ? status.findings.filter((f) => f.confidence === 'ambiguous' && !f.review && !f.reviewError).length
+      : 0
+  const halted = status.kind === 'results' ? status.findings.find((f) => f.reviewHalt) : undefined
 
   return (
     <main className="page">
@@ -114,13 +160,20 @@ export default function App() {
         </p>
       )}
 
-      {status.kind === 'done' && (
+      {status.kind === 'results' && (
         <section aria-live="polite">
           <h2>
             {status.findings.length === 0
               ? 'No sensitive data found'
               : `${status.findings.length} finding${status.findings.length === 1 ? '' : 's'}`}
           </h2>
+          {status.running && <p className="status">Reviewing ambiguous matches… {pending} left</p>}
+          {status.cancelled && <p className="status">Cancelled. Showing partial results.</p>}
+          {halted && (
+            <p role="alert" className="error">
+              Review stopped: {halted.reviewError}. Rule-based results are still shown.
+            </p>
+          )}
           <div className="filters">
             {[...counts].map(([type, n]) => (
               <label key={type} className={`chip type-${type}`}>

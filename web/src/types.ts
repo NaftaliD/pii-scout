@@ -8,6 +8,7 @@ export interface Finding {
   confidence: 'high' | 'ambiguous'
   review?: { label: 'sensitive' | 'not_sensitive'; reason: string }
   reviewError?: string
+  reviewHalt?: 'budget_exhausted' | 'circuit_open'
 }
 
 export const TYPE_LABELS: Record<FindingType, string> = {

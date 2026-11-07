@@ -41,3 +41,23 @@ describe("reviewFindings", () => {
     expect(out.find((f) => f.confidence === "ambiguous")!.reviewError).toBe("Review unavailable");
   });
 });
+
+describe("reviewFindings with guards", () => {
+  it("marks findings as halted without retrying, and reports each result as it settles", async () => {
+    const { HaltError } = await import("./guards");
+    let calls = 0;
+    const classify: Classifier = async () => {
+      calls++;
+      throw new HaltError("budget_exhausted", "LLM spend limit reached");
+    };
+    const seen: number[] = [];
+    const out = await reviewFindings(text, scanText(text), classify, {
+      retryBaseMs: 1,
+      onReviewed: (i) => seen.push(i),
+    });
+    expect(calls).toBe(1);
+    const f = out.find((x) => x.confidence === "ambiguous")!;
+    expect(f.reviewHalt).toBe("budget_exhausted");
+    expect(seen).toHaveLength(1);
+  });
+});
