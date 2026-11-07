@@ -1,5 +1,7 @@
 name: CI
 
+# Must run on every push to main: Render's autoDeployTrigger "checksPass" deploys only
+# commits that have at least one passing check.
 on:
   push:
   pull_request:
@@ -11,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: |
             server/package-lock.json
@@ -26,3 +28,19 @@ jobs:
       - run: npm --prefix web test
       - run: npm --prefix web run build
       - run: npm --prefix server run build
+
+  # Proves the production image builds and answers /health, the same thing Render will do.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t scanner .
+      - name: Smoke test the container
+        run: |
+          docker run -d --name scanner -p 3000:3000 -e PORT=3000 scanner
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:3000/health && exit 0
+            sleep 1
+          done
+          docker logs scanner
+          exit 1

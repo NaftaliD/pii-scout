@@ -3,7 +3,16 @@ services:
     name: scanner
     runtime: docker
     plan: free
+    branch: main
+    # Deploy a commit only after its GitHub Actions checks (ci.yml) have all passed.
+    autoDeployTrigger: checksPass
     healthCheckPath: /health
     envVars:
+      # Default to the free dummy classifier so a public URL can never spend real money.
+      - key: LLM_MODE
+        value: fake
+      - key: LLM_BUDGET_UNITS
+        value: "20"
+      # Only needed if LLM_MODE is switched to "anthropic" in the dashboard.
       - key: LLM_API_KEY
         sync: false

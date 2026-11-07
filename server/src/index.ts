@@ -12,7 +12,7 @@ const num = (name: string, fallback: number) => {
 };
 
 // LLM_MODE=fake (default) uses the free dummy classifier; LLM_MODE=anthropic needs LLM_API_KEY.
-const mode = process.env.LLM_MODE ?? "fake";
+const mode = process.env.LLM_MODE || "fake";
 const apiKey = process.env.LLM_API_KEY;
 let provider;
 if (mode === "anthropic") {
